@@ -131,18 +131,35 @@ ORDER BY City, pct_diff_from_city_avg DESC;
    4) Cross-tab: BHK vs Property Type (compact readable cross-tab)
    Purpose: show which property types are most common per BHK and avg ppsf
 --------------------------------------------------------------------------- */
-SELECT
-  BHK_Type,
-  GROUP_CONCAT(CONCAT(Property_Type, ':', cnt) ORDER BY cnt DESC SEPARATOR ', ') AS property_type_counts,
-  ROUND(AVG(Price_per_SQFT),2) AS avg_ppsf_per_bhk,
-  COUNT(*) AS total_listings_per_bhk
-FROM (
-  SELECT BHK_Type, Property_Type, Price_per_SQFT, COUNT(*) OVER (PARTITION BY BHK_Type, Property_Type) AS cnt
+WITH counts AS (
+  -- one row per BHK_Type x Property_Type with the true count
+  SELECT
+    BHK_Type,
+    Property_Type,
+    COUNT(*) AS cnt,
+    ROUND(AVG(Price_per_SQFT),2) AS avg_ppsf_for_group
   FROM clean_real_estate
-  WHERE BHK_Type IS NOT NULL AND Property_Type IS NOT NULL
-) t
-GROUP BY BHK_Type
-ORDER BY total_listings_per_bhk DESC;
+  WHERE BHK_Type IS NOT NULL
+    AND Property_Type IS NOT NULL
+  GROUP BY BHK_Type, Property_Type
+),
+avg_bhk AS (
+  SELECT 
+    BHK_Type,
+    ROUND(AVG(Price_per_SQFT),2) AS avg_ppsf_per_bhk
+  FROM clean_real_estate
+  WHERE BHK_Type IS NOT NULL
+  GROUP BY BHK_Type
+)
+SELECT
+  c.BHK_Type,
+  c.Property_Type,
+  c.cnt,
+  SUM(c.cnt) OVER (PARTITION BY c.BHK_Type) AS total_listings_per_bhk,   
+  a.avg_ppsf_per_bhk
+FROM counts c
+JOIN avg_bhk a USING (BHK_Type)
+ORDER BY c.BHK_Type, total_listings_per_bhk DESC, c.cnt DESC;
 
 /* ---------------------------------------------------------------------------
    5) Locality Volume vs. Average Price Relationship
