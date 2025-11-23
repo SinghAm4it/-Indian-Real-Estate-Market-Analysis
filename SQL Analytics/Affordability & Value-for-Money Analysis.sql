@@ -229,34 +229,60 @@ ORDER BY cl.City, cheap_listing_count DESC;
    8) Balance of Options Across Price Tiers (Evenness)
    Purpose: compute a simple evenness index across 5 price quintiles
 --------------------------------------------------------------------------- */
-WITH city_buckets AS (
+WITH price_segment AS (
   SELECT
     City,
-    Price_per_SQFT,
-    NTILE(5) OVER (PARTITION BY City ORDER BY Price_per_SQFT) AS quintile
+    CASE
+      WHEN Price_per_SQFT < 6000 THEN 'Budget'
+      WHEN Price_per_SQFT BETWEEN 6000 AND 10000 THEN 'Mid'
+      WHEN Price_per_SQFT BETWEEN 10000 AND 14000 THEN 'Upper Mid'
+      WHEN Price_per_SQFT BETWEEN 14000 AND 20000 THEN 'Premium'
+      ELSE 'Luxury'
+    END AS price_tier
   FROM clean_real_estate
   WHERE City IS NOT NULL AND Price_per_SQFT IS NOT NULL
 ),
-city_bucket_counts AS (
+tier_counts AS (
   SELECT
     City,
-    quintile,
+    price_tier,
     COUNT(*) AS cnt
-  FROM city_buckets
-  GROUP BY City, quintile
+  FROM price_segment
+  GROUP BY City, price_tier
 ),
 city_totals AS (
-  SELECT City, SUM(cnt) AS total
-  FROM city_bucket_counts
+  SELECT
+    City,
+    SUM(cnt) AS total
+  FROM tier_counts
+  GROUP BY City
+),
+pivoted AS (
+  SELECT
+    City,
+    SUM(CASE WHEN price_tier = 'Budget'    THEN cnt ELSE 0 END) AS budget_cnt,
+    SUM(CASE WHEN price_tier = 'Mid'       THEN cnt ELSE 0 END) AS mid_cnt,
+    SUM(CASE WHEN price_tier = 'Upper Mid' THEN cnt ELSE 0 END) AS upper_mid_cnt,
+    SUM(CASE WHEN price_tier = 'Premium'   THEN cnt ELSE 0 END) AS premium_cnt,
+    SUM(CASE WHEN price_tier = 'Luxury'    THEN cnt ELSE 0 END) AS luxury_cnt
+  FROM tier_counts
   GROUP BY City
 )
 SELECT
-  cbc.City,
-  -- evenness index = sum of squared shares across quintiles (smaller -> more even)
-  ROUND(SUM( POWER( cnt / NULLIF(ct.total, 0), 2) ), 4) AS evenness_index,
-  -- human-readable counts by quintile (Q1:xx, Q2:yy, ...)
-  GROUP_CONCAT(CONCAT('Q', cbc.quintile, ':', cbc.cnt) ORDER BY cbc.quintile SEPARATOR ', ') AS counts_by_quintile
-FROM city_bucket_counts cbc
+  p.City,
+  ct.total AS total_listings,
+  p.budget_cnt   AS budget_listings,
+  p.mid_cnt      AS mid_listings,
+  p.upper_mid_cnt AS upper_mid_listings,
+  p.premium_cnt  AS premium_listings,
+  p.luxury_cnt   AS luxury_listings,
+  ROUND(
+      COALESCE(POWER(p.budget_cnt    / NULLIF(ct.total,0), 2), 0)
+    + COALESCE(POWER(p.mid_cnt       / NULLIF(ct.total,0), 2), 0)
+    + COALESCE(POWER(p.upper_mid_cnt / NULLIF(ct.total,0), 2), 0)
+    + COALESCE(POWER(p.premium_cnt   / NULLIF(ct.total,0), 2), 0)
+    + COALESCE(POWER(p.luxury_cnt    / NULLIF(ct.total,0), 2), 0)
+  , 4) AS evenness_index
+FROM pivoted p
 JOIN city_totals ct USING (City)
-GROUP BY cbc.City
 ORDER BY evenness_index ASC;
