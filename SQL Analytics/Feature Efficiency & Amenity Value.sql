@@ -130,7 +130,7 @@ WITH bhk_parsed AS (
   SELECT
     City,
     BHK_Type,
-    NULLIF(CAST(REGEXP_REPLACE(BHK_Type, '[^0-9]', '') AS UNSIGNED), 0) AS bhk_num,
+    CAST(NULLIF(REPLACE(REGEXP_SUBSTR(BHK_Type, '[0-9]+(\\.[0-9]+)?'), ',', '.'), '') AS DECIMAL(6,1)) AS bhk_num,
     Price_in_Cr
   FROM clean_real_estate
   WHERE City IS NOT NULL AND BHK_Type IS NOT NULL AND Price_in_Cr IS NOT NULL
